@@ -4,7 +4,7 @@ import android.media.session.MediaController;
 import android.media.session.PlaybackState;
 
 public interface MediaInfoCallback {
-    void onMediaInfoUpdated(String title, String artist, long duration, String albumArtUri);
+    void onMediaInfoUpdated(String title, String artist, long duration, String albumArtUri, String filePath);
     void onPlaybackStateChanged(PlaybackState state);
     void onPackageChanged(String packageName);
 

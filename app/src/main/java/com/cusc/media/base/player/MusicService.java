@@ -2,11 +2,14 @@ package com.cusc.media.base.player;
 
 import android.annotation.SuppressLint;
 import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.Intent;
 import android.media.session.MediaController;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.ResultReceiver;
 import android.support.v4.media.MediaBrowserCompat;
 import android.support.v4.media.MediaDescriptionCompat;
 import android.support.v4.media.MediaMetadataCompat;
@@ -18,17 +21,22 @@ import android.support.v4.media.session.PlaybackStateCompat;
 import android.util.Log;
 import android.content.Context;
 
+import com.cusc.media.lyric.LyricsManager;
+
 import java.util.List;
 
 public class MusicService extends MediaBrowserServiceCompat implements MediaInfoCallback {
     private static final String TAG = "SimpleMusicService";
     private static final String MY_MEDIA_ROOT_ID = "media_root_id";
     private static final String CHANNEL_ID = "channel_1";
+    private static final String COMMAND_GET_AUDIO_LRC = "com.cusc.media.command.getAudioLrc";
+    private static final String KEY_MUSIC_ID_L = "MUSIC_ID_L";
 
     private MediaSessionCompat mediaSession;
     private PlaybackStateCompat.Builder stateBuilder;
     private QueueManager mQueueManager;
     private AlbumArtServer mAlbumArtServer;
+    private LyricsManager lyricsManager;
 
     /** 当前目标媒体 App 的 MediaController，由 MediaSessionListenerService 回调注入 */
     private MediaController mMediaController;
@@ -59,6 +67,7 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
     private long latestDuration = 180000; // 默认3分钟
     private String latestAlbumArtUri = null;
     private String lastPackageName = null;
+    private String currentFilePath = null;
     // 用于生成唯一的mediaId（默认值避免桌面读取时为 null）
     private String currentMediaId = "0";
     // 上次已持久化的歌曲键（title+artist），用于判断是否为真正的切歌，避免同歌封面纠正时多余写盘
@@ -82,6 +91,7 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
         mAlbumArtServer.start();
 
         // 步骤0：恢复上次播放的元数据
+        lyricsManager = new LyricsManager(this);
         restoreLastMediaInfo();
 
         // 步骤1：初始化MediaSession
@@ -153,6 +163,18 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
                     mMediaController.getTransportControls().skipToPrevious();
                 }
             }
+
+            @Override
+            public void onCommand(String command, Bundle args, ResultReceiver cb) {
+                super.onCommand(command, args, cb);
+                if (!COMMAND_GET_AUDIO_LRC.equals(command) || cb == null) {
+                    return;
+                }
+                long musicId = args != null ? args.getLong(KEY_MUSIC_ID_L) : 0;
+                String requestMediaId = String.valueOf(musicId);
+                Log.d(TAG, "onCommand getAudioLrc, mediaId=" + requestMediaId);
+                lyricsManager.request(requestMediaId, cb::send);
+            }
         });
 
         // 步骤5：注册MediaSessionListenerService的回调
@@ -202,6 +224,11 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
         lastPersistedSongKey = latestTitle + latestArtist;
         
         Log.d(TAG, "Restored media info: " + latestTitle + " - " + latestArtist);
+
+        if (lyricsManager != null) {
+            lyricsManager.setCurrent(currentMediaId, latestTitle, latestArtist, latestDuration,
+                    lastPackageName, null);
+        }
     }
 
     private void saveLastMediaInfo() {
@@ -216,7 +243,7 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
     }
 
     @Override
-    public void onMediaInfoUpdated(String title, String artist, long duration, String albumArtUri) {
+    public void onMediaInfoUpdated(String title, String artist, long duration, String albumArtUri, String filePath) {
         Log.d(TAG, "Received latest media info: " + title + "-" + artist + ", duration: " + duration);
 
         // 更新本地存储的最新媒体信息
@@ -234,6 +261,7 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
         String uniqueKey = latestTitle + latestArtist + artKey;
         String newMediaId = String.valueOf(Math.abs(uniqueKey.hashCode()));
         currentMediaId = newMediaId;
+        currentFilePath = filePath;
 
         // 持久化判定仅看 title+artist 是否变化，避免同一首歌封面纠正时产生多余磁盘写入
         String songKey = latestTitle + latestArtist;
@@ -260,6 +288,9 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
 
         // 更新MediaSession元数据
         updateMediaMetadata();
+
+        lyricsManager.setCurrent(currentMediaId, latestTitle, latestArtist, latestDuration,
+                lastPackageName, currentFilePath);
         
         // 仅在歌曲切换时持久化，避免同一首歌的重复元数据回调触发多余磁盘写入
         if (songMetaChanged) {
@@ -296,6 +327,14 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
 
     @SuppressLint("ForegroundServiceType")
     private void initNotification() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, CHANNEL_ID,
+                    NotificationManager.IMPORTANCE_LOW);
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            if (nm != null) {
+                nm.createNotificationChannel(channel);
+            }
+        }
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID).build();
         startForeground(1, notification);
     }
