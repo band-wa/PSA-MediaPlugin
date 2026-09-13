@@ -27,6 +27,7 @@ public class OnlineLyricsFetcher {
     private static final int SOURCE_QQMUSIC = 2;
     private static final int SOURCE_NETEASE = 3;
     private static final int SOURCE_KUWO = 4;
+    private static final long TOTAL_TIMEOUT_MS = 20000;
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final String cacheDir;
 
@@ -100,7 +101,12 @@ public class OnlineLyricsFetcher {
         }
         List<Integer> sourceOrder = getPreferredSources(playerPackage);
         Log.d(TAG, "API源优先级: " + sourceOrder + " (播放器: " + playerPackage + ")");
+        long deadline = System.currentTimeMillis() + TOTAL_TIMEOUT_MS;
         for (int src : sourceOrder) {
+            if (System.currentTimeMillis() > deadline) {
+                Log.w(TAG, "总超时，停止尝试剩余源");
+                break;
+            }
             try {
                 String lrcContent;
                 switch (src) {
