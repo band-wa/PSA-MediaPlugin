@@ -28,6 +28,7 @@ public class OnlineLyricsFetcher {
     private static final int SOURCE_NETEASE = 3;
     private static final int SOURCE_KUWO = 4;
     private static final long TOTAL_TIMEOUT_MS = 20000;
+    private static final int MIN_CANDIDATE_SCORE = 6;
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final String cacheDir;
 
@@ -197,6 +198,10 @@ public class OnlineLyricsFetcher {
                 bestAccesskey = item.optString("accesskey", "");
             }
         }
+        if (bestScore < MIN_CANDIDATE_SCORE) {
+            Log.w(TAG, "kugou candidates irrelevant (best=" + bestScore + ")");
+            return null;
+        }
         if (bestId == null || bestId.isEmpty() || bestAccesskey == null || bestAccesskey.isEmpty()) {
             return null;
         }
@@ -261,6 +266,10 @@ public class OnlineLyricsFetcher {
                 bestScore = score;
                 bestHash = hash;
             }
+        }
+        if (bestScore < MIN_CANDIDATE_SCORE) {
+            Log.w(TAG, "kugou mobile candidates irrelevant (best=" + bestScore + ")");
+            return null;
         }
         if (bestHash == null || bestHash.isEmpty()) {
             return null;
@@ -332,6 +341,10 @@ public class OnlineLyricsFetcher {
                 bestSongmid = item.optString("songmid", "");
             }
         }
+        if (bestScore < MIN_CANDIDATE_SCORE) {
+            Log.w(TAG, "qq candidates irrelevant (best=" + bestScore + ")");
+            return null;
+        }
         if (bestSongmid == null || bestSongmid.isEmpty()) {
             return null;
         }
@@ -395,6 +408,10 @@ public class OnlineLyricsFetcher {
                 bestScore = score;
                 bestId = item.optString("id", "");
             }
+        }
+        if (bestScore < MIN_CANDIDATE_SCORE) {
+            Log.w(TAG, "netease candidates irrelevant (best=" + bestScore + ")");
+            return null;
         }
         if (bestId == null || bestId.isEmpty()) {
             return null;
@@ -473,6 +490,10 @@ public class OnlineLyricsFetcher {
                 bestScore = score;
                 bestMusicId = musicId;
             }
+        }
+        if (bestScore < MIN_CANDIDATE_SCORE) {
+            Log.w(TAG, "kuwo candidates irrelevant (best=" + bestScore + ")");
+            return null;
         }
         if (bestMusicId == null || bestMusicId.isEmpty()) {
             return null;
