@@ -15,5 +15,8 @@
     <string name="supported_apps_title">支持的第三方音乐APP</string>
     <string name="app_qq_music">QQ音乐</string>
     <string name="app_qishui_music">汽水音乐</string>
+    <string name="app_netease_music">网易云音乐</string>
+    <string name="app_kugou_music">酷狗音乐</string>
+    <string name="app_kuwo_music">酷我音乐</string>
     <string name="app_supported_badge">✓ 已支持</string>
 </resources>
