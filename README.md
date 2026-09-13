@@ -1,7 +1,7 @@
 # PSA Media Plugin (PSA 多媒体插件)
 
 ![Claude](https://img.shields.io/badge/AI%20Assisted-Claude-orange?logo=anthropic&logoColor=white)
-[![Android Build](https://github.com/ShaobaiLee/PSA-MediaPlugin/actions/workflows/android.yml/badge.svg)](https://github.com/ShaobaiLee/PSA-MediaPlugin/actions/workflows/android.yml)
+[![Android Build](https://github.com/band-wa/PSA-MediaPlugin/actions/workflows/android.yml/badge.svg)](https://github.com/band-wa/PSA-MediaPlugin/actions/workflows/android.yml)
 
 一个轻量级的多媒体插件，专为 Blue-i 3.0 车机系统设计。用于桥接第三方音乐 APP，使其能够通过系统的原厂桌面卡片进行显示与控制。
 
