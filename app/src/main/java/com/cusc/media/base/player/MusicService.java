@@ -165,6 +165,15 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
             }
 
             @Override
+            public void onSeekTo(long pos) {
+                super.onSeekTo(pos);
+                Log.d(TAG, "SeekTo: " + pos);
+                if (mMediaController != null) {
+                    mMediaController.getTransportControls().seekTo(pos);
+                }
+            }
+
+            @Override
             public void onCommand(String command, Bundle args, ResultReceiver cb) {
                 super.onCommand(command, args, cb);
                 if (!COMMAND_GET_AUDIO_LRC.equals(command) || cb == null) {
