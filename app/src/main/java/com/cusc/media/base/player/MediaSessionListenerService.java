@@ -1,6 +1,7 @@
 package com.cusc.media.base.player;
 
 import android.app.Notification;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -8,7 +9,7 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
-import android.media.session.MediaSession;
+import android.media.session.MediaSessionManager;
 import android.media.session.PlaybackState;
 import android.os.Build;
 import android.os.Bundle;
@@ -41,6 +42,8 @@ public class MediaSessionListenerService extends NotificationListenerService {
 
     private MediaController mMediaController;
     private String currentPlayingPackage;
+    private MediaSessionManager sessionManager;
+    private ComponentName listenerComponent;
     private static MediaSessionListenerService instance;
     private MediaInfoCallback mediaInfoCallback;
     private OnlineLyricsFetcher onlineLyricsFetcher;
@@ -77,6 +80,7 @@ public class MediaSessionListenerService extends NotificationListenerService {
         super.onCreate();
         instance = this;
         onlineLyricsFetcher = new OnlineLyricsFetcher(this);
+        listenerComponent = new ComponentName(this, MediaSessionListenerService.class);
 
         // 若 MusicService 已在运行（比如本服务重启），主动让它重新注册回调，
         // 避免 mediaInfoCallback 为 null 导致媒体信息无法同步
@@ -101,6 +105,13 @@ public class MediaSessionListenerService extends NotificationListenerService {
         if (mMediaController != null) {
             mMediaController.unregisterCallback(mControllerCallback);
             mMediaController = null;
+        }
+        if (sessionManager != null) {
+            try {
+                sessionManager.removeOnActiveSessionsChangedListener(mSessionsChangedListener);
+            } catch (Exception ignored) {
+            }
+            sessionManager = null;
         }
         ioExecutor.shutdown();
         instance = null;
@@ -331,119 +342,127 @@ public class MediaSessionListenerService extends NotificationListenerService {
         public void onMetadataChanged(MediaMetadata metadata) {
             onMusicMetadataChanged(metadata);
         }
+
+        @Override
+        public void onSessionDestroyed() {
+            Log.d(TAG, "Session destroyed: " + currentPlayingPackage);
+            if (mMediaController != null) {
+                mMediaController.unregisterCallback(mControllerCallback);
+                mMediaController = null;
+            }
+            refreshSessions();
+        }
     };
+
+    private final MediaSessionManager.OnActiveSessionsChangedListener mSessionsChangedListener =
+            controllers -> refreshSessions();
 
     @Override
     public void onListenerConnected() {
         super.onListenerConnected();
         Log.d(TAG, "Notification listener service connected");
-        checkActiveMediaSessions();
+        sessionManager = (MediaSessionManager) getSystemService(MediaSessionManager.class);
+        if (sessionManager != null) {
+            try {
+                sessionManager.addOnActiveSessionsChangedListener(mSessionsChangedListener, listenerComponent);
+                Log.d(TAG, "OnActiveSessionsChangedListener registered");
+            } catch (Exception e) {
+                Log.w(TAG, "register sessions listener failed: " + e.getMessage());
+            }
+        }
+        refreshSessions();
     }
 
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
         super.onNotificationPosted(sbn);
-        if (isMediaNotification(sbn)) {
-            handleMediaNotification(sbn);
-        } else if (mMediaController == null) {
+        if (mMediaController == null || !isPlaying(mMediaController)) {
+            refreshSessions();
+        }
+        if (mMediaController == null) {
             handleFallbackNotification(sbn);
         }
+    }
+
+    private void refreshSessions() {
+        if (sessionManager == null) {
+            sessionManager = (MediaSessionManager) getSystemService(MediaSessionManager.class);
+        }
+        if (sessionManager == null) {
+            return;
+        }
+        List<MediaController> controllers;
+        try {
+            controllers = sessionManager.getActiveSessions(listenerComponent);
+        } catch (SecurityException e) {
+            Log.w(TAG, "getActiveSessions SecurityException: " + e.getMessage());
+            return;
+        } catch (Exception e) {
+            Log.w(TAG, "getActiveSessions failed: " + e.getMessage());
+            return;
+        }
+        int size = controllers != null ? controllers.size() : 0;
+        Log.d(TAG, "refreshSessions: " + size + " active session(s)");
+        if (controllers == null || controllers.isEmpty()) {
+            return;
+        }
+        MediaController selected = selectController(controllers);
+        attachController(selected);
+    }
+
+    private MediaController selectController(List<MediaController> controllers) {
+        if (mMediaController != null && isPlaying(mMediaController)) {
+            for (MediaController controller : controllers) {
+                if (controller.getSessionToken().equals(mMediaController.getSessionToken())) {
+                    return mMediaController;
+                }
+            }
+        }
+        for (MediaController controller : controllers) {
+            if (isPlaying(controller)) {
+                return controller;
+            }
+        }
+        return controllers.get(0);
+    }
+
+    private void attachController(MediaController controller) {
+        if (controller == null) {
+            return;
+        }
+        if (mMediaController != null
+                && controller.getSessionToken().equals(mMediaController.getSessionToken())) {
+            return;
+        }
+        if (mMediaController != null) {
+            mMediaController.unregisterCallback(mControllerCallback);
+        }
+        mMediaController = controller;
+        currentPlayingPackage = controller.getPackageName();
+        lastPackageName = currentPlayingPackage;
+        if (mediaInfoCallback != null) {
+            mediaInfoCallback.onMediaControllerChanged(mMediaController);
+            mediaInfoCallback.onPackageChanged(currentPlayingPackage);
+        }
+        Log.d(TAG, "Connected to media session: " + currentPlayingPackage);
+        try {
+            mMediaController.registerCallback(mControllerCallback);
+        } catch (Exception e) {
+            Log.w(TAG, "registerCallback failed: " + e.getMessage());
+        }
+        PlaybackState state = mMediaController.getPlaybackState();
+        MediaMetadata metadata = mMediaController.getMetadata();
+        if (state != null) onMusicStateChanged(state);
+        if (metadata != null) onMusicMetadataChanged(metadata);
     }
 
     @Override
     public void onNotificationRemoved(StatusBarNotification sbn) {
         super.onNotificationRemoved(sbn);
-        if (isMediaNotification(sbn)) {
-            if (mMediaController != null && sbn.getPackageName().equals(currentPlayingPackage)) {
-                mMediaController.unregisterCallback(mControllerCallback);
-                mMediaController = null;
-                currentPlayingPackage = null;
-                lastPackageName = null;
-                if (mediaInfoCallback != null) {
-                    mediaInfoCallback.onMediaControllerChanged(null);
-                    mediaInfoCallback.onPackageChanged(null);
-                }
-                Log.d(TAG, "Media session disconnected: " + sbn.getPackageName());
-            }
-        }
-    }
-
-    private void checkActiveMediaSessions() {
-        StatusBarNotification[] activeNotifications = getActiveNotifications();
-        if (activeNotifications == null) return;
-
-        StatusBarNotification best = null;
-        MediaController bestController = null;
-        for (StatusBarNotification sbn : activeNotifications) {
-            MediaSession.Token token = extractSessionToken(sbn);
-            if (token == null) continue;
-            MediaController controller;
-            try {
-                controller = new MediaController(this, token);
-            } catch (Exception e) {
-                continue;
-            }
-            if (best == null) {
-                best = sbn;
-                bestController = controller;
-            }
-            if (isPlaying(controller)) {
-                best = sbn;
-                bestController = controller;
-                break;
-            }
-        }
-        if (best != null) {
-            handleMediaNotification(best);
-        }
-    }
-
-    private void handleMediaNotification(StatusBarNotification sbn) {
-        if (!isMediaNotification(sbn)) {
-            return;
-        }
-
-        try {
-            MediaSession.Token newToken = extractSessionToken(sbn);
-            if (newToken == null) return;
-
-            boolean samePackage = sbn.getPackageName().equals(currentPlayingPackage);
-            boolean tokenChanged = mMediaController == null
-                    || !mMediaController.getSessionToken().equals(newToken);
-
-            if (mMediaController != null && samePackage && !tokenChanged) {
-                return;
-            }
-
-            if (mMediaController != null && tokenChanged) {
-                if (!samePackage) {
-                    MediaController incoming = new MediaController(this, newToken);
-                    if (isPlaying(mMediaController) && !isPlaying(incoming)) {
-                        Log.d(TAG, "Keep playing session: " + currentPlayingPackage
-                                + ", ignore: " + sbn.getPackageName());
-                        return;
-                    }
-                }
-                mMediaController.unregisterCallback(mControllerCallback);
-            }
-
-            mMediaController = new MediaController(this, newToken);
-            mMediaController.registerCallback(mControllerCallback);
-            currentPlayingPackage = sbn.getPackageName();
-            lastPackageName = currentPlayingPackage;
-            if (mediaInfoCallback != null) {
-                mediaInfoCallback.onMediaControllerChanged(mMediaController);
-                mediaInfoCallback.onPackageChanged(currentPlayingPackage);
-            }
-            Log.d(TAG, "Connected to media session: " + currentPlayingPackage
-                    + (tokenChanged ? " (Token updated)" : ""));
-
-            PlaybackState state = mMediaController.getPlaybackState();
-            MediaMetadata metadata = mMediaController.getMetadata();
-            if (state != null) onMusicStateChanged(state);
-            if (metadata != null) onMusicMetadataChanged(metadata);
-        } catch (Exception e) {
-            Log.e(TAG, "Error handling media notification", e);
+        if (mMediaController != null && sbn.getPackageName().equals(currentPlayingPackage)
+                && !isPlaying(mMediaController)) {
+            Log.d(TAG, "Notification removed for idle session: " + sbn.getPackageName());
+            refreshSessions();
         }
     }
 
@@ -483,25 +502,6 @@ public class MediaSessionListenerService extends NotificationListenerService {
         }
         Log.d(TAG, "Fallback info from notification: " + titleStr + " - " + artistStr
                 + " (pkg: " + pkg + ")");
-    }
-
-    private static MediaSession.Token extractSessionToken(StatusBarNotification sbn) {
-        Notification notification = sbn.getNotification();
-        if (notification == null || notification.extras == null) return null;
-        try {
-            if (Build.VERSION.SDK_INT >= 33) {
-                return notification.extras.getParcelable(Notification.EXTRA_MEDIA_SESSION, MediaSession.Token.class);
-            }
-            return notification.extras.getParcelable(Notification.EXTRA_MEDIA_SESSION);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private boolean isMediaNotification(StatusBarNotification sbn) {
-        Notification notification = sbn.getNotification();
-        return notification != null && notification.extras != null
-                && notification.extras.containsKey(Notification.EXTRA_MEDIA_SESSION);
     }
 
     private static boolean isPlaying(MediaController controller) {
