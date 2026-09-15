@@ -6,4 +6,9 @@
         <item name="android:textColorPrimary">@color/colorOnSurface</item>
         <item name="android:textColorSecondary">@color/colorOnSurfaceMuted</item>
     </style>
+
+    <style name="Theme.MediaPlugin.Translucent">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+    </style>
 </resources>

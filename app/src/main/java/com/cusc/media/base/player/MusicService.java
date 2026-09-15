@@ -6,6 +6,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Intent;
 import android.media.session.MediaController;
+import android.media.session.PlaybackState;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -407,5 +408,16 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
 
     public MediaSessionCompat getMediaSession() {
         return mediaSession;
+    }
+
+    public String getPlayingPackageName() {
+        if (mMediaController == null) {
+            return null;
+        }
+        PlaybackState state = mMediaController.getPlaybackState();
+        if (state != null && state.getState() == PlaybackState.STATE_PLAYING) {
+            return mMediaController.getPackageName();
+        }
+        return null;
     }
 }

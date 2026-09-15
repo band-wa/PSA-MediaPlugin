@@ -2,11 +2,15 @@ package com.cusc.media;
 
 import android.app.Activity;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.media.session.MediaController;
+import android.media.session.MediaSessionManager;
+import android.media.session.PlaybackState;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -16,6 +20,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import com.cusc.media.base.player.MediaSessionListenerService;
 import com.cusc.media.base.player.MusicService;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.EncodeHintType;
@@ -25,6 +30,7 @@ import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class MainActivity extends Activity {
@@ -32,6 +38,7 @@ public class MainActivity extends Activity {
     private static final String TAG = "MainActivity";
     private TextView permissionStatusText;
     private TextView connectedAppText;
+    private boolean jumpedToPlayingApp;
 
     private final MusicService.MusicServiceCallback musicServiceCallback = new MusicService.MusicServiceCallback() {
         @Override
@@ -43,6 +50,14 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        String playingPackage = resolvePlayingPackage();
+        if (playingPackage != null) {
+            launchPlayingApp(playingPackage);
+            jumpedToPlayingApp = true;
+            return;
+        }
+
         setContentView(R.layout.activity_main);
 
         Button actionBtn = findViewById(R.id.btn_restore);
@@ -79,14 +94,68 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (jumpedToPlayingApp) {
+            return;
+        }
         updatePermissionStatus();
-        
+
         MusicService musicService = MusicService.getInstance();
         if (musicService != null) {
             musicService.setMusicServiceCallback(musicServiceCallback);
+            String playingPackage = musicService.getPlayingPackageName();
+            if (playingPackage != null) {
+                launchPlayingApp(playingPackage);
+                return;
+            }
         } else {
             Log.w(TAG, "MusicService not running, cannot register callback");
             connectedAppText.setText(R.string.none);
+        }
+    }
+
+    private String resolvePlayingPackage() {
+        MusicService musicService = MusicService.getInstance();
+        if (musicService != null) {
+            String playingPackage = musicService.getPlayingPackageName();
+            if (playingPackage != null) {
+                return playingPackage;
+            }
+        }
+        if (!isNotificationServiceEnabled()) {
+            return null;
+        }
+        try {
+            MediaSessionManager sessionManager =
+                    (MediaSessionManager) getSystemService(Context.MEDIA_SESSION_SERVICE);
+            if (sessionManager == null) {
+                return null;
+            }
+            ComponentName listenerComponent =
+                    new ComponentName(this, MediaSessionListenerService.class);
+            List<MediaController> controllers = sessionManager.getActiveSessions(listenerComponent);
+            if (controllers == null) {
+                return null;
+            }
+            for (MediaController controller : controllers) {
+                PlaybackState state = controller.getPlaybackState();
+                if (state != null && state.getState() == PlaybackState.STATE_PLAYING) {
+                    return controller.getPackageName();
+                }
+            }
+        } catch (SecurityException | IllegalStateException e) {
+            Log.w(TAG, "getActiveSessions failed: " + e.getMessage());
+        }
+        return null;
+    }
+
+    private void launchPlayingApp(String packageName) {
+        Intent launchIntent = getPackageManager().getLaunchIntentForPackage(packageName);
+        if (launchIntent != null) {
+            Log.d(TAG, "Music playing, jumping to: " + packageName);
+            startActivity(launchIntent);
+            finish();
+        } else {
+            Log.w(TAG, "No launch intent for playing app: " + packageName);
         }
     }
 
