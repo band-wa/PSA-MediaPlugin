@@ -27,6 +27,7 @@ public class OnlineLyricsFetcher {
     private static final int SOURCE_QQMUSIC = 2;
     private static final int SOURCE_NETEASE = 3;
     private static final int SOURCE_KUWO = 4;
+    private static final int SOURCE_LRCLIB = 5;
     private static final long TOTAL_TIMEOUT_MS = 20000;
     private static final int MIN_CANDIDATE_SCORE = 6;
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -41,6 +42,12 @@ public class OnlineLyricsFetcher {
     }
 
     private List<Integer> getPreferredSources(String playerPackage) {
+        List<Integer> order = buildSourceOrder(playerPackage);
+        order.add(SOURCE_LRCLIB);
+        return order;
+    }
+
+    private List<Integer> buildSourceOrder(String playerPackage) {
         List<Integer> order = new ArrayList<>();
         if (playerPackage == null) {
             order.add(SOURCE_KUGOU);
@@ -125,6 +132,9 @@ public class OnlineLyricsFetcher {
                         break;
                     case SOURCE_KUWO:
                         lrcContent = fetchFromKuwo(title, artist);
+                        break;
+                    case SOURCE_LRCLIB:
+                        lrcContent = fetchFromLrcLib(title, artist, duration);
                         break;
                     default:
                         lrcContent = null;
@@ -534,6 +544,90 @@ public class OnlineLyricsFetcher {
             return null;
         }
         return LyricContentHelper.normalizeFetched(lrcContent);
+    }
+
+    private String fetchFromLrcLib(String title, String artist, long durationMs) throws Exception {
+        String trackEnc = URLEncoder.encode(title, "UTF-8");
+        boolean hasArtist = artist != null && !artist.isEmpty();
+        String artistEnc = hasArtist ? URLEncoder.encode(artist, "UTF-8") : "";
+        if (hasArtist) {
+            String getResp = httpGet("https://lrclib.net/api/get?track_name=" + trackEnc
+                    + "&artist_name=" + artistEnc, null);
+            String synced = extractSyncedLyrics(getResp);
+            if (synced != null) {
+                return synced;
+            }
+        }
+        String searchUrl = hasArtist
+                ? "https://lrclib.net/api/search?track_name=" + trackEnc + "&artist_name=" + artistEnc
+                : "https://lrclib.net/api/search?q=" + trackEnc;
+        String searchResp = httpGet(searchUrl, null);
+        if (searchResp == null || searchResp.isEmpty() || searchResp.trim().startsWith("<")) {
+            return null;
+        }
+        JSONArray results = new JSONArray(searchResp);
+        if (results.length() == 0) {
+            return null;
+        }
+        long durationSec = durationMs > 0 ? durationMs / 1000 : 0;
+        String bestLyrics = null;
+        int bestScore = -1;
+        for (int i = 0; i < results.length(); i++) {
+            JSONObject item = results.getJSONObject(i);
+            String lyrics = extractSyncedLyricsFromItem(item);
+            if (lyrics == null) {
+                continue;
+            }
+            int score = 0;
+            String trackName = item.optString("trackName", "");
+            if (fuzzyEquals(trackName, title)) {
+                score += 10;
+            } else if (fuzzyContains(trackName, title)) {
+                score += 5;
+            }
+            String artistName = item.optString("artistName", "");
+            if (hasArtist) {
+                if (fuzzyEquals(artistName, artist)) {
+                    score += 10;
+                } else if (fuzzyContains(artistName, artist)) {
+                    score += 5;
+                }
+            }
+            double itemDuration = item.optDouble("duration", 0);
+            if (durationSec > 0 && itemDuration > 0 && Math.abs(itemDuration - durationSec) <= 3) {
+                score += 5;
+            }
+            if (i == 0) {
+                score++;
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                bestLyrics = lyrics;
+            }
+        }
+        if (bestScore < MIN_CANDIDATE_SCORE) {
+            Log.w(TAG, "lrclib candidates irrelevant (best=" + bestScore + ")");
+            return null;
+        }
+        return bestLyrics;
+    }
+
+    private String extractSyncedLyrics(String resp) throws Exception {
+        if (resp == null || resp.isEmpty() || resp.trim().startsWith("<")) {
+            return null;
+        }
+        return extractSyncedLyricsFromItem(new JSONObject(resp));
+    }
+
+    private String extractSyncedLyricsFromItem(JSONObject item) {
+        if (item == null || item.optBoolean("instrumental", false)) {
+            return null;
+        }
+        String synced = item.optString("syncedLyrics", "");
+        if (synced.trim().isEmpty()) {
+            return null;
+        }
+        return LyricContentHelper.normalizeFetched(synced);
     }
 
     private String httpGet(String urlStr) throws Exception {
