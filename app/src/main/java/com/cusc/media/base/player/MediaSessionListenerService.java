@@ -9,6 +9,7 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
+import android.media.session.MediaSession;
 import android.media.session.MediaSessionManager;
 import android.media.session.PlaybackState;
 import android.os.Build;
@@ -28,8 +29,13 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -332,6 +338,20 @@ public class MediaSessionListenerService extends NotificationListenerService {
         return Objects.equals(a, b);
     }
 
+    private final MediaController.Callback mMonitorCallback = new MediaController.Callback() {
+        @Override
+        public void onPlaybackStateChanged(PlaybackState state) {
+            scheduleRefresh();
+        }
+
+        @Override
+        public void onSessionDestroyed() {
+            scheduleRefresh();
+        }
+    };
+
+    private final Map<MediaSession.Token, MediaController> monitoredSessions = new HashMap<>();
+
     private final MediaController.Callback mControllerCallback = new MediaController.Callback() {
         @Override
         public void onPlaybackStateChanged(PlaybackState state) {
@@ -384,6 +404,46 @@ public class MediaSessionListenerService extends NotificationListenerService {
         }
     }
 
+    private void scheduleRefresh() {
+        if (refreshScheduled) {
+            return;
+        }
+        refreshScheduled = true;
+        mainHandler.post(() -> {
+            refreshScheduled = false;
+            refreshSessions();
+        });
+    }
+
+    private void monitorSessions(List<MediaController> controllers) {
+        Set<MediaSession.Token> current = new HashSet<>();
+        for (MediaController controller : controllers) {
+            MediaSession.Token token = controller.getSessionToken();
+            current.add(token);
+            if (!monitoredSessions.containsKey(token)) {
+                try {
+                    controller.registerCallback(mMonitorCallback);
+                } catch (Exception ignored) {
+                }
+                monitoredSessions.put(token, controller);
+            }
+        }
+        Iterator<Map.Entry<MediaSession.Token, MediaController>> iterator =
+                monitoredSessions.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<MediaSession.Token, MediaController> entry = iterator.next();
+            if (!current.contains(entry.getKey())) {
+                try {
+                    entry.getValue().unregisterCallback(mMonitorCallback);
+                } catch (Exception ignored) {
+                }
+                iterator.remove();
+            }
+        }
+    }
+
+    private boolean refreshScheduled;
+
     private void refreshSessions() {
         if (sessionManager == null) {
             sessionManager = (MediaSessionManager) getSystemService(MediaSessionManager.class);
@@ -406,7 +466,17 @@ public class MediaSessionListenerService extends NotificationListenerService {
         if (controllers == null || controllers.isEmpty()) {
             return;
         }
-        MediaController selected = selectController(controllers);
+        List<MediaController> candidates = new ArrayList<>();
+        for (MediaController controller : controllers) {
+            if (!getPackageName().equals(controller.getPackageName())) {
+                candidates.add(controller);
+            }
+        }
+        if (candidates.isEmpty()) {
+            return;
+        }
+        monitorSessions(candidates);
+        MediaController selected = selectController(candidates);
         attachController(selected);
     }
 
