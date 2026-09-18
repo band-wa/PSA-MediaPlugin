@@ -92,7 +92,7 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
         mAlbumArtServer.start();
 
         // 步骤0：恢复上次播放的元数据
-        lyricsManager = new LyricsManager(this);
+        lyricsManager = LyricsManager.getInstance(this);
         restoreLastMediaInfo();
 
         // 步骤1：初始化MediaSession

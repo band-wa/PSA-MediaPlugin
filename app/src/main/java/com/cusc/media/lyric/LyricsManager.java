@@ -48,8 +48,21 @@ public class LyricsManager {
     private final Map<String, Long> failedAt = new HashMap<>();
     private SongMeta current;
 
-    public LyricsManager(Context context) {
-        fetcher = new OnlineLyricsFetcher(context.getApplicationContext());
+    private static volatile LyricsManager sInstance;
+
+    public static LyricsManager getInstance(Context context) {
+        if (sInstance == null) {
+            synchronized (LyricsManager.class) {
+                if (sInstance == null) {
+                    sInstance = new LyricsManager(context);
+                }
+            }
+        }
+        return sInstance;
+    }
+
+    private LyricsManager(Context context) {
+        fetcher = OnlineLyricsFetcher.getInstance(context.getApplicationContext());
     }
 
     public void setCurrent(String mediaId, String title, String artist, long duration,

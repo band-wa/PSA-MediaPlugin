@@ -17,8 +17,6 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 public class OnlineLyricsFetcher {
     private static final String TAG = "OnlineLyrics";
@@ -30,10 +28,22 @@ public class OnlineLyricsFetcher {
     private static final int SOURCE_LRCLIB = 5;
     private static final long TOTAL_TIMEOUT_MS = 20000;
     private static final int MIN_CANDIDATE_SCORE = 6;
-    private static final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final String cacheDir;
 
-    public OnlineLyricsFetcher(Context context) {
+    private static volatile OnlineLyricsFetcher sInstance;
+
+    public static OnlineLyricsFetcher getInstance(Context context) {
+        if (sInstance == null) {
+            synchronized (OnlineLyricsFetcher.class) {
+                if (sInstance == null) {
+                    sInstance = new OnlineLyricsFetcher(context);
+                }
+            }
+        }
+        return sInstance;
+    }
+
+    private OnlineLyricsFetcher(Context context) {
         this.cacheDir = context.getCacheDir().getAbsolutePath() + "/online_lyrics";
         File dir = new File(this.cacheDir);
         if (!dir.exists()) {

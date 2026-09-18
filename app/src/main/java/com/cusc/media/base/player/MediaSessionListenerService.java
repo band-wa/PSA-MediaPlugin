@@ -85,7 +85,7 @@ public class MediaSessionListenerService extends NotificationListenerService {
     public void onCreate() {
         super.onCreate();
         instance = this;
-        onlineLyricsFetcher = new OnlineLyricsFetcher(this);
+        onlineLyricsFetcher = OnlineLyricsFetcher.getInstance(this);
         listenerComponent = new ComponentName(this, MediaSessionListenerService.class);
 
         // 若 MusicService 已在运行（比如本服务重启），主动让它重新注册回调，
