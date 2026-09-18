@@ -122,16 +122,16 @@ public class OnlineLyricsFetcher {
                         lrcContent = fetchFromKugou(title, artist, duration);
                         break;
                     case SOURCE_KUGOU_MOBILE:
-                        lrcContent = fetchFromKugouMobile(title, artist);
+                        lrcContent = fetchFromKugouMobile(title, artist, duration);
                         break;
                     case SOURCE_QQMUSIC:
-                        lrcContent = fetchFromQQMusic(title, artist);
+                        lrcContent = fetchFromQQMusic(title, artist, duration);
                         break;
                     case SOURCE_NETEASE:
-                        lrcContent = fetchFromNetEase(title, artist);
+                        lrcContent = fetchFromNetEase(title, artist, duration);
                         break;
                     case SOURCE_KUWO:
-                        lrcContent = fetchFromKuwo(title, artist);
+                        lrcContent = fetchFromKuwo(title, artist, duration);
                         break;
                     case SOURCE_LRCLIB:
                         lrcContent = fetchFromLrcLib(title, artist, duration);
@@ -154,11 +154,15 @@ public class OnlineLyricsFetcher {
     }
 
     private String fetchFromKugou(String title, String artist, long duration) throws Exception {
+        return downloadKugouLyric(title, artist, duration);
+    }
+
+    private String downloadKugouLyric(String title, String artist, long durationMs) throws Exception {
         String keyword = LyricContentHelper.buildSearchKeyword(title, artist);
         String keywordEnc = URLEncoder.encode(keyword, "UTF-8");
-        String durSec = duration > 0 ? String.valueOf(duration / 1000) : "";
-        String searchUrl = "https://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword="
-                + keywordEnc + "&duration=" + durSec;
+        String durMs = durationMs > 0 ? String.valueOf(durationMs) : "";
+        String searchUrl = "https://lyrics.kugou.com/search?ver=1&man=yes&client=mobi&keyword="
+                + keywordEnc + "&duration=" + durMs;
         String searchResp = httpGet(searchUrl);
         if (searchResp == null || searchResp.isEmpty()) {
             return null;
@@ -170,46 +174,23 @@ public class OnlineLyricsFetcher {
         }
         String bestId = null;
         String bestAccesskey = null;
+        String bestDesc = "";
         int bestScore = -1;
         for (int i = 0; i < candidates.length(); i++) {
             JSONObject item = candidates.getJSONObject(i);
             String songName = item.optString("song", "");
             String singerName = item.optString("singer", "");
-            long itemDuration = item.optLong("duration", 0L);
-            int score = 0;
-            if (fuzzyEquals(songName, title)) {
-                score += 10;
-            } else if (fuzzyContains(songName, title)) {
-                score += 5;
-            }
-            if (artist != null && !artist.isEmpty()) {
-                if (fuzzyEquals(singerName, artist)) {
-                    score += 10;
-                } else if (fuzzyContains(singerName, artist)) {
-                    score += 5;
-                }
-            }
-            if (duration > 0 && itemDuration > 0) {
-                long diff = Math.abs(itemDuration * 1000 - duration);
-                if (diff < 3000) {
-                    score += 8;
-                } else if (diff < 5000) {
-                    score += 5;
-                } else if (diff < 10000) {
-                    score += 2;
-                }
-            }
-            if (i == 0) {
-                score++;
-            }
+            long itemDurationMs = item.optLong("duration", 0L);
+            int score = scoreCandidate(songName, singerName, title, artist, itemDurationMs, durationMs, i);
             if (score > bestScore) {
                 bestScore = score;
                 bestId = item.optString("id", "");
                 bestAccesskey = item.optString("accesskey", "");
+                bestDesc = songName + "-" + singerName;
             }
         }
         if (bestScore < MIN_CANDIDATE_SCORE) {
-            Log.w(TAG, "kugou candidates irrelevant (best=" + bestScore + ")");
+            Log.w(TAG, "kugou candidates irrelevant (best=" + bestScore + ", top=" + bestDesc + ")");
             return null;
         }
         if (bestId == null || bestId.isEmpty() || bestAccesskey == null || bestAccesskey.isEmpty()) {
@@ -231,10 +212,10 @@ public class OnlineLyricsFetcher {
         return LyricContentHelper.normalizeFetched(content);
     }
 
-    private String fetchFromKugouMobile(String title, String artist) throws Exception {
+    private String fetchFromKugouMobile(String title, String artist, long duration) throws Exception {
         String keyword = LyricContentHelper.buildSearchKeyword(title, artist);
         String keywordEnc = URLEncoder.encode(keyword, "UTF-8");
-        String searchUrl = "https://mobilecdn.kugou.com/api/v3/search/song?keyword="
+        String searchUrl = "https://mobiles.kugou.com/api/v3/search/song?keyword="
                 + keywordEnc + "&page=1&pagesize=10&showtype=1";
         String searchResp = httpGet(searchUrl);
         if (searchResp == null || searchResp.isEmpty()) {
@@ -249,57 +230,35 @@ public class OnlineLyricsFetcher {
         if (info == null || info.length() == 0) {
             return null;
         }
-        String bestHash = null;
+        String bestSong = null;
+        String bestSinger = null;
+        long bestDurationMs = 0;
         int bestScore = -1;
         for (int i = 0; i < info.length(); i++) {
             JSONObject item = info.getJSONObject(i);
             String songName = item.optString("songname", "");
             String singerName = item.optString("singername", "");
             String hash = item.optString("hash", "");
-            int score = 0;
-            if (fuzzyEquals(songName, title)) {
-                score += 10;
-            } else if (fuzzyContains(songName, title)) {
-                score += 5;
-            }
-            if (artist != null && !artist.isEmpty()) {
-                if (fuzzyEquals(singerName, artist)) {
-                    score += 10;
-                } else if (fuzzyContains(singerName, artist)) {
-                    score += 5;
-                }
-            }
-            if (i == 0) {
-                score++;
-            }
+            long itemDurationMs = item.optLong("duration", 0L) * 1000L;
+            int score = scoreCandidate(songName, singerName, title, artist, itemDurationMs, duration, i);
             if (score > bestScore && !hash.isEmpty()) {
                 bestScore = score;
-                bestHash = hash;
+                bestSong = songName;
+                bestSinger = singerName;
+                bestDurationMs = itemDurationMs;
             }
         }
         if (bestScore < MIN_CANDIDATE_SCORE) {
             Log.w(TAG, "kugou mobile candidates irrelevant (best=" + bestScore + ")");
             return null;
         }
-        if (bestHash == null || bestHash.isEmpty()) {
+        if (bestSong == null || bestSong.isEmpty()) {
             return null;
         }
-        String downloadUrl = "https://lyrics.kugou.com/download?ver=1&client=pc&id="
-                + URLEncoder.encode(bestHash, "UTF-8") + "&accesskey="
-                + URLEncoder.encode(bestHash, "UTF-8") + "&fmt=lrc";
-        String downloadResp = httpGet(downloadUrl);
-        if (downloadResp == null || downloadResp.isEmpty()) {
-            return null;
-        }
-        JSONObject downloadJson = new JSONObject(downloadResp);
-        String content = downloadJson.optString("content", "");
-        if (content.isEmpty()) {
-            return null;
-        }
-        return LyricContentHelper.normalizeFetched(content);
+        return downloadKugouLyric(bestSong, bestSinger, bestDurationMs);
     }
 
-    private String fetchFromQQMusic(String title, String artist) throws Exception {
+    private String fetchFromQQMusic(String title, String artist, long duration) throws Exception {
         String keyword = artist != null && !artist.isEmpty() ? title + " " + artist : title;
         String keywordEnc = URLEncoder.encode(keyword, "UTF-8");
         String searchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w="
@@ -323,6 +282,7 @@ public class OnlineLyricsFetcher {
             return null;
         }
         String bestSongmid = null;
+        String bestDesc = "";
         int bestScore = -1;
         for (int i = 0; i < list.length(); i++) {
             JSONObject item = list.getJSONObject(i);
@@ -330,29 +290,16 @@ public class OnlineLyricsFetcher {
             JSONArray singers = item.optJSONArray("singer");
             String singerName = (singers == null || singers.length() <= 0)
                     ? "" : singers.getJSONObject(0).optString("name", "");
-            int score = 0;
-            if (fuzzyEquals(songName, title)) {
-                score += 10;
-            } else if (fuzzyContains(songName, title)) {
-                score += 5;
-            }
-            if (artist != null && !artist.isEmpty()) {
-                if (fuzzyEquals(singerName, artist)) {
-                    score += 10;
-                } else if (fuzzyContains(singerName, artist)) {
-                    score += 5;
-                }
-            }
-            if (i == 0) {
-                score++;
-            }
+            long itemDurationMs = item.optLong("interval", 0L) * 1000L;
+            int score = scoreCandidate(songName, singerName, title, artist, itemDurationMs, duration, i);
             if (score > bestScore) {
                 bestScore = score;
                 bestSongmid = item.optString("songmid", "");
+                bestDesc = songName + "-" + singerName;
             }
         }
         if (bestScore < MIN_CANDIDATE_SCORE) {
-            Log.w(TAG, "qq candidates irrelevant (best=" + bestScore + ")");
+            Log.w(TAG, "qq candidates irrelevant (best=" + bestScore + ", top=" + bestDesc + ")");
             return null;
         }
         if (bestSongmid == null || bestSongmid.isEmpty()) {
@@ -372,7 +319,7 @@ public class OnlineLyricsFetcher {
         return LyricContentHelper.normalizeFetched(lyric);
     }
 
-    private String fetchFromNetEase(String title, String artist) throws Exception {
+    private String fetchFromNetEase(String title, String artist, long duration) throws Exception {
         String keyword = LyricContentHelper.buildSearchKeyword(title, artist);
         String keywordEnc = URLEncoder.encode(keyword, "UTF-8");
         String searchUrl = "https://music.163.com/api/search/get/web?s="
@@ -391,6 +338,7 @@ public class OnlineLyricsFetcher {
             return null;
         }
         String bestId = null;
+        String bestDesc = "";
         int bestScore = -1;
         for (int i = 0; i < songs.length(); i++) {
             JSONObject item = songs.getJSONObject(i);
@@ -398,29 +346,16 @@ public class OnlineLyricsFetcher {
             JSONArray artists = item.optJSONArray("artists");
             String artistName = (artists == null || artists.length() <= 0)
                     ? "" : artists.getJSONObject(0).optString("name", "");
-            int score = 0;
-            if (fuzzyEquals(songName, title)) {
-                score += 10;
-            } else if (fuzzyContains(songName, title)) {
-                score += 5;
-            }
-            if (artist != null && !artist.isEmpty()) {
-                if (fuzzyEquals(artistName, artist)) {
-                    score += 10;
-                } else if (fuzzyContains(artistName, artist)) {
-                    score += 5;
-                }
-            }
-            if (i == 0) {
-                score++;
-            }
+            long itemDurationMs = item.optLong("duration", 0L);
+            int score = scoreCandidate(songName, artistName, title, artist, itemDurationMs, duration, i);
             if (score > bestScore) {
                 bestScore = score;
                 bestId = item.optString("id", "");
+                bestDesc = songName + "-" + artistName;
             }
         }
         if (bestScore < MIN_CANDIDATE_SCORE) {
-            Log.w(TAG, "netease candidates irrelevant (best=" + bestScore + ")");
+            Log.w(TAG, "netease candidates irrelevant (best=" + bestScore + ", top=" + bestDesc + ")");
             return null;
         }
         if (bestId == null || bestId.isEmpty()) {
@@ -450,12 +385,26 @@ public class OnlineLyricsFetcher {
         return LyricContentHelper.normalizeFetched(lyric);
     }
 
-    private String fetchFromKuwo(String title, String artist) throws Exception {
+    private String fetchFromKuwo(String title, String artist, long duration) throws Exception {
         String keyword = LyricContentHelper.buildSearchKeyword(title, artist);
         String keywordEnc = URLEncoder.encode(keyword, "UTF-8");
-        String searchUrl = "http://search.kuwo.cn/r.s?all=" + keywordEnc
+        String searchUrl = "https://search.kuwo.cn/r.s?all=" + keywordEnc
                 + "&ft=music&itemset=web_2013&client=kt&pn=0&rn=10&rformat=json&encoding=utf8&uid=221260053&ver=kwplayer_ar_9.2.2.1_B_jiakong_vh.apk";
-        String searchResp = httpGet(searchUrl);
+        String searchResp = null;
+        try {
+            searchResp = httpGet(searchUrl);
+        } catch (Exception e) {
+            Log.w(TAG, "酷我HTTPS搜索失败: " + e.getMessage());
+        }
+        if (searchResp == null || searchResp.isEmpty()) {
+            try {
+                searchResp = httpGet("http://search.kuwo.cn/r.s?all=" + keywordEnc
+                        + "&ft=music&itemset=web_2013&client=kt&pn=0&rn=10&rformat=json&encoding=utf8&uid=221260053&ver=kwplayer_ar_9.2.2.1_B_jiakong_vh.apk");
+            } catch (Exception e) {
+                Log.w(TAG, "酷我HTTP搜索失败: " + e.getMessage());
+                return null;
+            }
+        }
         if (searchResp == null || searchResp.isEmpty()) {
             Log.w(TAG, "酷我搜索返回空");
             return null;
@@ -471,6 +420,7 @@ public class OnlineLyricsFetcher {
             return null;
         }
         String bestMusicId = null;
+        String bestDesc = "";
         int bestScore = -1;
         for (int i = 0; i < abslist.length(); i++) {
             JSONObject item = abslist.getJSONObject(i);
@@ -480,29 +430,16 @@ public class OnlineLyricsFetcher {
             if (musicId.startsWith("MUSIC_")) {
                 musicId = musicId.substring(6);
             }
-            int score = 0;
-            if (fuzzyEquals(songName, title)) {
-                score += 10;
-            } else if (fuzzyContains(songName, title)) {
-                score += 5;
-            }
-            if (artist != null && !artist.isEmpty()) {
-                if (fuzzyEquals(singerName, artist)) {
-                    score += 10;
-                } else if (fuzzyContains(singerName, artist)) {
-                    score += 5;
-                }
-            }
-            if (i == 0) {
-                score++;
-            }
+            long itemDurationMs = item.optLong("DURATION", 0L) * 1000L;
+            int score = scoreCandidate(songName, singerName, title, artist, itemDurationMs, duration, i);
             if (score > bestScore && !musicId.isEmpty()) {
                 bestScore = score;
                 bestMusicId = musicId;
+                bestDesc = songName + "-" + singerName;
             }
         }
         if (bestScore < MIN_CANDIDATE_SCORE) {
-            Log.w(TAG, "kuwo candidates irrelevant (best=" + bestScore + ")");
+            Log.w(TAG, "kuwo candidates irrelevant (best=" + bestScore + ", top=" + bestDesc + ")");
             return null;
         }
         if (bestMusicId == null || bestMusicId.isEmpty()) {
@@ -685,6 +622,37 @@ public class OnlineLyricsFetcher {
 
     private String sanitizeFileName(String name) {
         return name.replaceAll("[\\\\/:*?\"<>|\\s]", "_").replaceAll("_+", "_");
+    }
+
+    private int scoreCandidate(String songName, String singerName, String title, String artist,
+                               long itemDurationMs, long durationMs, int index) {
+        int score = 0;
+        if (fuzzyEquals(songName, title)) {
+            score += 10;
+        } else if (fuzzyContains(songName, title)) {
+            score += 5;
+        }
+        if (artist != null && !artist.isEmpty()) {
+            if (fuzzyEquals(singerName, artist)) {
+                score += 10;
+            } else if (fuzzyContains(singerName, artist)) {
+                score += 5;
+            }
+        }
+        if (durationMs > 0 && itemDurationMs > 0) {
+            long diff = Math.abs(itemDurationMs - durationMs);
+            if (diff < 3000) {
+                score += 8;
+            } else if (diff < 5000) {
+                score += 5;
+            } else if (diff < 10000) {
+                score += 2;
+            }
+        }
+        if (index == 0) {
+            score++;
+        }
+        return score;
     }
 
     private String normalizeString(String s) {
