@@ -10,8 +10,8 @@ android {
         applicationId = "com.cusc.media"
         minSdk = 28
         targetSdk = 34
-        versionCode = 6003
-        versionName = "1.7"
+        versionCode = 6004
+        versionName = "1.7.1"
         resConfigs("en")
     }
 
