@@ -17,7 +17,8 @@ import java.util.concurrent.Executors;
 public class LyricsManager {
     private static final String TAG = "LyricsManager";
     public static final String KEY_MUSIC_LRC_LIST = "MUSIC_LRC_LIST";
-    public static final int RESULT_OK = 0;
+    public static final int RESULT_OK = 200;
+    public static final int RESULT_EMPTY = 0;
     private static final long FAILED_TTL_MS = 60000;
 
     public interface ResultSender {
@@ -81,12 +82,12 @@ public class LyricsManager {
     public void request(final String mediaId, final ResultSender sender) {
         executor.execute(() -> {
             if (mediaId == null || mediaId.isEmpty()) {
-                sender.send(RESULT_OK, new Bundle());
+                sender.send(RESULT_EMPTY, new Bundle());
                 return;
             }
             if (current == null || !mediaId.equals(current.mediaId)) {
                 Log.d(TAG, "request for stale/unknown mediaId=" + mediaId);
-                sender.send(RESULT_OK, new Bundle());
+                sender.send(RESULT_EMPTY, new Bundle());
                 return;
             }
             List<Lrc> cached = cache.get(mediaId);
@@ -96,7 +97,7 @@ public class LyricsManager {
                 return;
             }
             if (isRecentlyFailed(mediaId)) {
-                sender.send(RESULT_OK, new Bundle());
+                sender.send(RESULT_EMPTY, new Bundle());
                 return;
             }
             List<Lrc> list = resolve(current);
