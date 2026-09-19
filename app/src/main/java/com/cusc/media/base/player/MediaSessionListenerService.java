@@ -364,6 +364,14 @@ public class MediaSessionListenerService extends NotificationListenerService {
         }
 
         @Override
+        public void onQueueChanged(List<MediaSession.QueueItem> queue) {
+            if (mediaInfoCallback != null) {
+                CharSequence queueTitle = mMediaController != null ? mMediaController.getQueueTitle() : null;
+                mediaInfoCallback.onQueueUpdated(queueTitle, queue);
+            }
+        }
+
+        @Override
         public void onSessionDestroyed() {
             Log.d(TAG, "Session destroyed: " + currentPlayingPackage);
             if (mMediaController != null) {

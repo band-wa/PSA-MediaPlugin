@@ -6,6 +6,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Intent;
 import android.media.session.MediaController;
+import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
 import android.os.Build;
 import android.os.Bundle;
@@ -22,6 +23,7 @@ import android.support.v4.media.session.PlaybackStateCompat;
 import android.util.Log;
 import android.content.Context;
 
+import com.cusc.bean.media.AudioInfo;
 import com.cusc.media.lyric.LyricsManager;
 
 import java.util.List;
@@ -31,7 +33,11 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
     private static final String MY_MEDIA_ROOT_ID = "media_root_id";
     private static final String CHANNEL_ID = "channel_1";
     private static final String COMMAND_GET_AUDIO_LRC = "com.cusc.media.command.getAudioLrc";
+    private static final String COMMAND_SET_AUDIO_LIST = "com.cusc.media.command.setAudioList";
+    private static final String COMMAND_SET_NULL_AUDIO_LIST = "com.cusc.media.command.setNullAudioList";
+    private static final String COMMAND_CLEAR_AUDIO_LIST = "com.cusc.media.command.clearAudioList";
     private static final String KEY_MUSIC_ID_L = "MUSIC_ID_L";
+    private static final int RESULT_OK = 200;
 
     private MediaSessionCompat mediaSession;
     private PlaybackStateCompat.Builder stateBuilder;
@@ -166,6 +172,25 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
             }
 
             @Override
+            public void onSkipToQueueItem(long id) {
+                super.onSkipToQueueItem(id);
+                Log.d(TAG, "SkipToQueueItem: " + id);
+                if (mMediaController == null) {
+                    return;
+                }
+                if (mQueueManager != null && mQueueManager.isHistoryPlaylist()) {
+                    AudioInfo info = mQueueManager.findHistoryItem(id);
+                    if (info != null) {
+                        String query = info.audioName + " " + info.singerName;
+                        Log.d(TAG, "playFromSearch: " + query);
+                        mMediaController.getTransportControls().playFromSearch(query, new Bundle());
+                        return;
+                    }
+                }
+                mMediaController.getTransportControls().skipToQueueItem(id);
+            }
+
+            @Override
             public void onSeekTo(long pos) {
                 super.onSeekTo(pos);
                 Log.d(TAG, "SeekTo: " + pos);
@@ -177,6 +202,31 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
             @Override
             public void onCommand(String command, Bundle args, ResultReceiver cb) {
                 super.onCommand(command, args, cb);
+                if (COMMAND_SET_AUDIO_LIST.equals(command)) {
+                    Log.d(TAG, "onCommand setAudioList");
+                    if (args != null) {
+                        args.setClassLoader(AudioInfoList.class.getClassLoader());
+                        AudioInfoList audioInfoList = args.getParcelable("AudioInfoList");
+                        if (mQueueManager != null) {
+                            mQueueManager.handleOemAudioList(audioInfoList);
+                        }
+                    }
+                    if (cb != null) {
+                        cb.send(RESULT_OK, new Bundle());
+                    }
+                    return;
+                }
+                if (COMMAND_SET_NULL_AUDIO_LIST.equals(command)
+                        || COMMAND_CLEAR_AUDIO_LIST.equals(command)) {
+                    Log.d(TAG, "onCommand " + command);
+                    if (mQueueManager != null) {
+                        mQueueManager.clearPlaylistQueue();
+                    }
+                    if (cb != null) {
+                        cb.send(RESULT_OK, new Bundle());
+                    }
+                    return;
+                }
                 if (!COMMAND_GET_AUDIO_LRC.equals(command) || cb == null) {
                     return;
                 }
@@ -301,6 +351,9 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
 
         lyricsManager.setCurrent(currentMediaId, latestTitle, latestArtist, latestDuration,
                 lastPackageName, currentFilePath);
+        if (mQueueManager != null) {
+            mQueueManager.addHistoryTrack(currentMediaId, latestTitle, latestArtist, latestDuration);
+        }
         
         // 仅在歌曲切换时持久化，避免同一首歌的重复元数据回调触发多余磁盘写入
         if (songMetaChanged) {
@@ -317,6 +370,10 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
         // 使用带 updateTime 的 setState 方法，确保进度条同步准确
         // 直接透传原始 PlaybackState 的最后更新时间
         stateBuilder.setState(state.getState(), state.getPosition(), state.getPlaybackSpeed(), state.getLastPositionUpdateTime());
+        long activeQueueItemId = state.getActiveQueueItemId();
+        if (activeQueueItemId >= 0) {
+            stateBuilder.setActiveQueueItemId(activeQueueItemId);
+        }
         mediaSession.setPlaybackState(stateBuilder.build());
         Log.d(TAG, "Sync playback state: state=" + state.getState() + ", pos=" + state.getPosition() + ", lastUpdateTime=" + state.getLastPositionUpdateTime());
     }
@@ -331,8 +388,33 @@ public class MusicService extends MediaBrowserServiceCompat implements MediaInfo
 
     @Override
     public void onMediaControllerChanged(MediaController controller) {
+        boolean appSwitched = mMediaController != null && controller != null
+                && !controller.getPackageName().equals(mMediaController.getPackageName());
         mMediaController = controller;
         Log.d(TAG, "MediaController updated: " + (controller != null ? controller.getPackageName() : "null"));
+        if (mQueueManager == null) {
+            return;
+        }
+        if (appSwitched) {
+            mQueueManager.resetPlaylist();
+        } else if (controller != null) {
+            mQueueManager.mirrorQueue(controller.getQueueTitle(), controller.getQueue());
+        }
+    }
+
+    @Override
+    public void onQueueUpdated(CharSequence queueTitle, List<MediaSession.QueueItem> queue) {
+        if (mQueueManager != null) {
+            mQueueManager.mirrorQueue(queueTitle, queue);
+        }
+    }
+
+    public long getActiveQueueItemId() {
+        if (mMediaController == null) {
+            return -1;
+        }
+        PlaybackState state = mMediaController.getPlaybackState();
+        return state != null ? state.getActiveQueueItemId() : -1;
     }
 
     @SuppressLint("ForegroundServiceType")
